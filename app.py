@@ -278,10 +278,13 @@ def ffprobe_cmd():
 def get_audio_meta(fp):
     cmd = ffprobe_cmd() + ['-v', 'quiet', '-print_format', 'json',
                            '-show_format', '-show_streams', str(fp)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
     if r.returncode != 0:
         raise RuntimeError(f'ffprobe error: {r.stderr}')
-    data = json.loads(r.stdout)
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f'ffprobe returned invalid JSON: {e}\nOutput: {r.stdout[:500]}')
     streams = data.get('streams', [])
     fmt = data.get('format', {})
     info = {'filename': Path(fp).name}
@@ -300,19 +303,6 @@ def get_audio_meta(fp):
         info['bit_rate'] = f"{int(info['bit_rate']) // 1000} kbps"
     info['format'] = fmt.get('format_name', '?')
     return info
-
-
-def atempo_chain(ratio):
-    parts = []
-    while ratio > 2.0:
-        parts.append('atempo=2.0')
-        ratio /= 2.0
-    while ratio < 0.5:
-        parts.append('atempo=0.5')
-        ratio /= 0.5
-    if abs(ratio - 1.0) > 0.001:
-        parts.append(f'atempo={ratio:.6f}')
-    return ','.join(parts)
 
 
 def mime_type(ext):
@@ -339,7 +329,7 @@ def process(inp, out, speed_ratio, pitch_ratio):
     elif ext in ('.m4a', '.aac'):
         cmd += ['-b:a', '192k']
     cmd.append(str(out))
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
     if r.returncode != 0:
         raise RuntimeError(r.stderr[-2000:] if len(r.stderr) > 2000 else r.stderr)
 
@@ -347,7 +337,7 @@ def process(inp, out, speed_ratio, pitch_ratio):
 def get_sample_rate(fp):
     cmd = ffprobe_cmd() + ['-v', 'error', '-show_entries', 'stream=sample_rate',
                            '-of', 'default=noprint_wrappers=1:nokey=1', str(fp)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
     if r.returncode != 0:
         raise RuntimeError(f'ffprobe error: {r.stderr}')
     return int(r.stdout.strip().split('\n')[0])
