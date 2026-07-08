@@ -428,13 +428,19 @@ def serve(name):
 if __name__ == '__main__':
     if not os.path.isfile(FFMPEG):
         print(f'ERROR: ffmpeg not found at {FFMPEG}')
+        input('Press Enter to exit...')
         exit(1)
     if not os.path.isfile(FFPROBE):
         print(f'ERROR: ffprobe not found at {FFPROBE}')
+        input('Press Enter to exit...')
         exit(1)
-    t = threading.Thread(target=lambda: (time.sleep(3600), cleanup()), daemon=True)
-    t.start()
     url = 'http://127.0.0.1:5566'
     print(f' * Running on {url}')
+    print(' * Press Ctrl+C to stop')
     webbrowser.open(url)
-    app.run(host='127.0.0.1', port=5566, debug=False)
+    try:
+        app.run(host='127.0.0.1', port=5566, debug=False)
+    except KeyboardInterrupt:
+        print('\nShutting down gracefully...')
+        cleanup()
+        print('Done.')
