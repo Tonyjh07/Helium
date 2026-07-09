@@ -1,4 +1,4 @@
-import os, uuid, subprocess, time, threading, json, webbrowser
+import os, uuid, subprocess, time, threading, json, webbrowser, argparse
 from pathlib import Path
 from flask import Flask, request, render_template_string, send_file, jsonify
 
@@ -416,6 +416,15 @@ def serve(name):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Helium - audio speed/pitch tool')
+    parser.add_argument('--host', default='127.0.0.1',
+                        help='listen address (default: 127.0.0.1)')
+    parser.add_argument('--port', type=int, default=5566,
+                        help='listen port (default: 5566)')
+    parser.add_argument('--lan', action='store_true',
+                        help='shortcut for --host 0.0.0.0 (LAN access)')
+    args = parser.parse_args()
+
     if not os.path.isfile(FFMPEG):
         print(f'ERROR: ffmpeg not found at {FFMPEG}')
         input('Press Enter to exit...')
@@ -424,12 +433,17 @@ if __name__ == '__main__':
         print(f'ERROR: ffprobe not found at {FFPROBE}')
         input('Press Enter to exit...')
         exit(1)
-    url = 'http://127.0.0.1:5566'
+
+    host = '0.0.0.0' if args.lan else args.host
+    port = args.port
+    scheme = 'http'
+    url = f'{scheme}://{host}:{port}'
     print(f' * Running on {url}')
     print(' * Press Ctrl+C to stop')
-    webbrowser.open(url)
+    if host in ('127.0.0.1', 'localhost'):
+        webbrowser.open(url)
     try:
-        app.run(host='127.0.0.1', port=5566, debug=False)
+        app.run(host=host, port=port, debug=False)
     except KeyboardInterrupt:
         print('\nShutting down gracefully...')
         cleanup()

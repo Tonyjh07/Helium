@@ -38,7 +38,9 @@ Helium/
 ### 3. 启动
 
 ```bash
-python app.py
+python app.py          # 仅本机访问
+python app.py --lan    # 局域网访问 (0.0.0.0:5566)
+python app.py --host 192.168.1.100 --port 8080  # 自定义地址和端口
 ```
 
 访问 `http://127.0.0.1:5566`
