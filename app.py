@@ -94,6 +94,29 @@ input[type=file]{width:100%;padding:6px 0;font-size:14px}
 <div class=hint>&#28369;&#22359; -24 ~ +24 &#21322;&#38899; &#65292;&#25903;&#25345; 0.25 ~ 4.0 &#20493;&#29575;</div>
 <div class=presets id=pitchPresets></div>
 </div>
+<div class=grp>
+<label>&#21407;&#38899;&#39057;&#39044;&#35272;</label>
+<audio id=origAudio controls preload=none style="width:100%"></audio>
+</div>
+<div class=grp>
+<label>&#21098;&#36753;</label>
+<div class=row>
+<span style="font-size:13px;color:#888;min-width:50px">&#36215;&#22987;</span>
+<input type=text id=clipStart value="0.0" style="width:72px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:14px;text-align:center">
+<span style="font-size:13px;color:#888">&#31186;</span>
+</div>
+<div class=row style="margin-top:4px">
+<button id=clipModeBtn style="padding:3px 8px;font-size:11px;border:1px solid #4a90d9;border-radius:4px;background:#4a90d9;color:#fff;cursor:pointer;min-width:36px">&#26102;&#38271;</button>
+<input type=text id=clipValue value="0.0" style="width:72px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:14px;text-align:center">
+<span style="font-size:13px;color:#888" id=clipUnitLabel>&#31186; (0 = &#21040;&#32467;&#23614;)</span>
+</div>
+<div class=hint id=clipHint>&#25991;&#20214;&#24635;&#26102;&#38271;: --:--</div>
+</div>
+<div class=grp>
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+<input type=checkbox id=reverseCheck style="width:16px;height:16px"> &#20498;&#25918; (&#38899;&#39057;&#21453;&#21521;&#25773;&#25918;)
+</label>
+</div>
 <div style="display:flex;gap:8px">
 <button class=btn id=procBtn style="flex:1">&#24320;&#22987;&#22788;&#29702;</button>
 <button class=btn style="flex:0;background:#888;padding:11px 14px;white-space:nowrap;font-size:13px" id=changeBtn>&#25442;&#25991;&#20214;</button>
@@ -145,6 +168,8 @@ function handleFile(file) {
       document.getElementById('metaBox').style.display = 'block';
       document.getElementById('controls').style.display = 'block';
       dropZone.style.display = 'none';
+      document.getElementById('clipHint').textContent = '\u6587\u4ef6\u603b\u65f6\u957f: ' + meta.duration + ' (' + meta.duration_seconds + ' \u79d2)';
+      document.getElementById('origAudio').src = '/original/' + fileId;
     })
     .catch(e => { document.getElementById('load').style.display = 'none'; document.getElementById('res').innerHTML = '<div class=err>Upload failed: ' + e.message + '</div>'; });
 }
@@ -234,13 +259,19 @@ document.getElementById('procBtn').addEventListener('click', function() {
   document.getElementById('load').style.display = 'block';
   document.getElementById('load').textContent = '\u{1F50A} Processing...';
   document.getElementById('res').innerHTML = '';
+  var clipVal = parseFloat(document.getElementById('clipValue').value) || 0;
+  var isEndMode = document.getElementById('clipModeBtn').textContent === '\u7ed3\u675f';
   fetch('/process', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       id: fileId,
       speed: parseFloat(spdText.value) || 1.0,
-      pitch: parseFloat(pitchText.value) || 1.0
+      pitch: parseFloat(pitchText.value) || 1.0,
+      reverse: document.getElementById('reverseCheck').checked,
+      clip_start: parseFloat(document.getElementById('clipStart').value) || 0,
+      clip_duration: isEndMode ? 0 : clipVal,
+      clip_end: isEndMode ? clipVal : 0
     })
   })
     .then(r => r.json())
@@ -264,6 +295,22 @@ controls.addEventListener('drop', function(e) {
   e.preventDefault();
   controls.style.borderColor = '';
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+// Clip mode toggle: duration / end time
+document.getElementById('clipModeBtn').addEventListener('click', function() {
+  var btn = this;
+  if (btn.textContent === '\u65f6\u957f') {
+    btn.textContent = '\u7ed3\u675f';
+    btn.style.background = '#e67e22';
+    btn.style.borderColor = '#e67e22';
+    document.getElementById('clipUnitLabel').textContent = '\u79d2';
+  } else {
+    btn.textContent = '\u65f6\u957f';
+    btn.style.background = '#4a90d9';
+    btn.style.borderColor = '#4a90d9';
+    document.getElementById('clipUnitLabel').textContent = '\u79d2 (0 = \u5230\u7ed3\u5c3e)';
+  }
 });
 </script>
 </body>
@@ -295,6 +342,7 @@ def get_audio_meta(fp):
             info['codec'] = s.get('codec_name', '?')
             break
     dur = float(fmt.get('duration', 0))
+    info['duration_seconds'] = round(dur, 2)
     h, m = int(dur // 3600), int((dur % 3600) // 60)
     s = dur % 60
     info['duration'] = f'{h:02d}:{m:02d}:{s:05.2f}' if h else f'{m:02d}:{s:05.2f}'
@@ -317,10 +365,22 @@ def output_codec(ext):
             '.flac': 'flac'}.get(ext, 'libmp3lame')
 
 
-def process(inp, out, speed_ratio, pitch_ratio):
+def process(inp, out, speed_ratio, pitch_ratio, reverse=False, clip_start=0, clip_duration=0, clip_end=0):
     sr = get_sample_rate(inp)
-    # Use librubberband for high-quality independent tempo & pitch control
-    filter_str = f'rubberband=tempo={speed_ratio:.4f}:pitch={pitch_ratio:.4f}:transients=crisp'
+    if clip_end > 0:
+        clip_duration = max(0, clip_end - clip_start)
+    filters = []
+    if clip_start > 0 or clip_duration > 0:
+        atrim_parts = []
+        if clip_start > 0:
+            atrim_parts.append(f'start={clip_start:.4f}')
+        if clip_duration > 0:
+            atrim_parts.append(f'duration={clip_duration:.4f}')
+        filters.append('atrim=' + ':'.join(atrim_parts))
+    filters.append(f'rubberband=tempo={speed_ratio:.4f}:pitch={pitch_ratio:.4f}:transients=crisp')
+    if reverse:
+        filters.append('areverse')
+    filter_str = ','.join(filters)
     ext = Path(out).suffix.lower()
     cmd = ffmpeg_cmd() + ['-y', '-i', str(inp), '-af', filter_str,
                           '-ar', str(sr), '-c:a', output_codec(ext)]
@@ -388,8 +448,15 @@ def process_route():
     uid = data['id']
     speed = float(data.get('speed', 1.0))
     pitch = float(data.get('pitch', 1.0))
+    reverse = data.get('reverse', False)
+    clip_start = float(data.get('clip_start', 0))
+    clip_duration = float(data.get('clip_duration', 0))
+    clip_end = float(data.get('clip_end', 0))
     speed = max(0.1, min(10.0, speed))
     pitch = max(0.25, min(4.0, pitch))
+    clip_start = max(0, clip_start)
+    clip_duration = max(0, clip_duration)
+    clip_end = max(0, clip_end)
     in_path = None
     for f in UPLOAD_DIR.iterdir():
         if f.stem == uid and f.suffix.lower() in SUPPORTED_EXTS:
@@ -400,7 +467,7 @@ def process_route():
     ext = in_path.suffix.lower()
     out_path = PROCESSED_DIR / f'{uid}{ext}'
     try:
-        process(in_path, out_path, speed, pitch)
+        process(in_path, out_path, speed, pitch, reverse, clip_start, clip_duration, clip_end)
         return jsonify(url=f'/processed/{uid}{ext}', mime=mime_type(ext),
                        name=f'processed_{speed:.2f}x_{pitch:.3f}x{ext}')
     except Exception as e:
@@ -413,6 +480,14 @@ def serve(name):
     if not p.is_file():
         return 'Not found', 404
     return send_file(str(p), mimetype=mime_type(Path(name).suffix.lower()))
+
+
+@app.route('/original/<uid>')
+def serve_original(uid):
+    for f in UPLOAD_DIR.iterdir():
+        if f.stem == uid and f.suffix.lower() in SUPPORTED_EXTS:
+            return send_file(str(f), mimetype=mime_type(f.suffix.lower()))
+    return 'Not found', 404
 
 
 if __name__ == '__main__':
